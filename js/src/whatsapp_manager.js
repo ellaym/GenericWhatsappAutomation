@@ -1,48 +1,64 @@
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
-const { handleMessage } = require("./handle_message.js");
-const { loadJsonFile } = require("./db_handler.js");
-const wwebVersion = '2.2412.54';
-const url_to_fix_whatsappwebjs_bug = `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${wwebVersion}.html`
+const wwebVersion = process.env.WHATSAPP_WEB_VERSION || "2.2412.54";
 
-async function main() {
+// Fix for the WhatsApp Web version bug, was taken from the official repository as a fix to a local cache bug
+const WWJS_BUG_URL_FIX = `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${wwebVersion}.html`;
+
+async function scrape_whatsapp_chat(msg_handler, chat_id) {
+  if (typeof chat_id !== "string") {
+    console.error("chat_id must be a string");
+    return -1;
+  }
+
+  if (typeof msg_handler !== "function") {
+    console.error("msg_handler must be a function");
+    return -1;
+  }
+
   const client = new Client({
     authStrategy: new LocalAuth(),
     webVersionCache: {
-      type: 'remote',
-      remotePath: url_to_fix_whatsappwebjs_bug,
+      type: "remote",
+      remotePath: WWJS_BUG_URL_FIX,
     },
   });
-  let config = {};
-
-  try {
-    config = await loadJsonFile("config/config.json");
-  } catch (error) {
-    console.error("Failed to load the JSON file:", error);
-    return -1;
-  }
-
-  if (!("chat_id" in config)) {
-    console.log("Config file should contain the chat_id field");
-    return -1;
-  }
 
   client.on("qr", (qr) => {
-    console.log(qr)
+    console.log("QR Code generated, scan please:");
     qrcode.generate(qr, { small: true });
   });
 
-  client.on("message", async msg => {
-    if (msg.from === config.chat_id) {  // Replace with your actual chat ID
-        try {
-            await handleMessage(msg);
-        } catch (error) {
-            console.error("Error handling message:", error);
-        }
+  client.on("ready", () => {
+    console.log("WhatsApp client is ready!");
+  });
+
+  client.on("message", async (msg) => {
+    if (msg.from === chat_id) {
+      try {
+        await msg_handler(msg);
+      } catch (error) {
+        console.error("Error handling message:", error);
+      }
     }
-});
+  });
+
+  client.on('auth_failure', message => {
+    console.error('Authentication failure:', message);
+  });
+
+  client.on('disconnected', (reason) => {
+    console.log('Client was disconnected:', reason);
+  });
 
   client.initialize();
+
+  process.on('SIGINT', () => {
+    client.destroy().then(() => {
+        console.log('Client closed');
+        process.exit(0);
+    });
+  });
 }
 
-main().catch(console.error);
+module.exports = { scrape_whatsapp_chat };
